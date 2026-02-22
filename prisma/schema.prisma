@@ -7,19 +7,28 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model Team {
-  id      Int      @id @default(autoincrement())
-  name    String   @unique
-  budget  Int
-  players Player[]
-}
-
 model Player {
   id        Int     @id @default(autoincrement())
   name      String
+  team      String?
   basePrice Int
   sold      Boolean @default(false)
+  currentBid Int? 
+  category  String
+  fromWhere String
+}
 
-  teamId Int?
-  team   Team? @relation(fields: [teamId], references: [id])
+model Team {
+  id         Int      @id @default(autoincrement())
+  name       String
+  purse      Int
+  players    Player[] @relation(fields: [id], references: [id])
+}
+
+model Bid {
+  id        Int     @id @default(autoincrement())
+  playerId  Int
+  teamId    Int
+  amount    Int
+  createdAt DateTime @default(now())
 }

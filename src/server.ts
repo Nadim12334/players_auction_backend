@@ -1,15 +1,33 @@
 import express from "express";
-import cors from "cors";
+import { PrismaClient } from "@prisma/client";
 
 const app = express();
+const prisma = new PrismaClient();
 
-app.use(cors());
 app.use(express.json());
 
+const PORT = process.env.PORT || 5000;
+
+// Test route
 app.get("/", (req, res) => {
-    res.send("Auction Backend Running 🚀");
+    res.send("Backend is running!");
 });
 
-app.listen(5000, () => {
-    console.log("Server running on http://localhost:5000");
+// Example: Get all players
+app.get("/api/players", async (req, res) => {
+    const players = await prisma.player.findMany();
+    res.json(players);
+});
+
+// Example: Add a new player
+app.post("/api/players", async (req, res) => {
+    const { name, team, basePrice } = req.body;
+    const player = await prisma.player.create({
+        data: { name, team, basePrice },
+    });
+    res.json(player);
+});
+
+app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
 });
