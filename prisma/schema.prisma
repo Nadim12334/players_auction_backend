@@ -1,0 +1,25 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model Team {
+  id      Int      @id @default(autoincrement())
+  name    String   @unique
+  budget  Int
+  players Player[]
+}
+
+model Player {
+  id        Int     @id @default(autoincrement())
+  name      String
+  basePrice Int
+  sold      Boolean @default(false)
+
+  teamId Int?
+  team   Team? @relation(fields: [teamId], references: [id])
+}
