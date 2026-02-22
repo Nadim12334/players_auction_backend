@@ -6,11 +6,11 @@ export const getAllTeams = async () => {
     });
 };
 
-export const createTeam = async (data: { name: string; budget: string | number }) => {
+export const createTeam = async (data: { name: string; purse: string | number }) => {
     return await prisma.team.create({
         data: {
             name: data.name,
-            budget: Number(data.budget),
+            purse: Number(data.purse),
         },
     });
 };

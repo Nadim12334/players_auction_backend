@@ -10,7 +10,8 @@ datasource db {
 model Player {
   id        Int     @id @default(autoincrement())
   name      String
-  team      String?
+  teamId    Int?
+  team      Team?   @relation(fields: [teamId], references: [id])
   basePrice Int
   sold      Boolean @default(false)
   currentBid Int? 
@@ -22,7 +23,7 @@ model Team {
   id         Int      @id @default(autoincrement())
   name       String
   purse      Int
-  players    Player[] @relation(fields: [id], references: [id])
+  players    Player[]
 }
 
 model Bid {

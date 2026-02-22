@@ -6,12 +6,14 @@ export const getAllPlayers = async () => {
     });
 };
 
-export const addPlayer = async (data: { name: string; teamId?: string; basePrice: string | number }) => {
+export const addPlayer = async (data: { name: string; teamId?: string; basePrice: string | number; category: string; fromWhere: string }) => {
     return await prisma.player.create({
         data: {
             name: data.name,
             basePrice: Number(data.basePrice),
             teamId: data.teamId ? Number(data.teamId) : null,
+            category: data.category,
+            fromWhere: data.fromWhere,
         },
     });
 };
