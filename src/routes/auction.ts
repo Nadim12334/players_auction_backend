@@ -1,9 +1,10 @@
-import { Router } from "express";
-import { placeBid, getLiveAuction } from "../controllers/auctionController";
+import express from "express";
+import { placeBid, markAsSold, startPlayerAuction } from "../controllers/auctionController";
 
-const router = Router();
+const router = express.Router();
 
-router.post("/bid", placeBid);          // Place a bid
-router.get("/live", getLiveAuction);    // Get live auction info
+router.post("/bid", placeBid);
+router.post("/sell/:playerId", markAsSold);
+router.post("/start/:playerId", startPlayerAuction);
 
 export default router;

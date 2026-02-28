@@ -17,6 +17,7 @@ export const io = new SocketServer(server, {
 export const prisma = new PrismaClient();
 
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
 // Routes
 app.use("/api/players", playerRoutes);
