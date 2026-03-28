@@ -104,7 +104,7 @@ export const placeBid = async (req: Request, res: Response) => {
 // SOLD PLAYERS
 export const getSoldPlayers = async (req: Request, res: Response) => {
     const players = await prisma.player.findMany({
-        where: { sold: true },
+        where: { sold: true, teamId: { not: null } },
         include: { team: true },
     });
 
@@ -115,7 +115,7 @@ export const getSoldPlayers = async (req: Request, res: Response) => {
 export const getUnsoldPlayers = async (req: Request, res: Response) => {
     const players = await prisma.player.findMany({
         where: {
-            sold: false,
+            sold: true,
             teamId: null,
         },
     });
