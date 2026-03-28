@@ -11,18 +11,23 @@ export const getTeams = async (req: Request, res: Response) => {
 
 // Add a new team
 export const addTeam = async (req: Request, res: Response) => {
-    const { name, purse } = req.body || {};
-    console.log("BODY:", req.body);
+    try {
+        const { name, purse } = req.body || {};
+        console.log("BODY:", req.body);
 
-    if (!name || !purse) {
-        return res.status(400).json({ error: "Name and purse are required" });
+        if (!name || !purse) {
+            return res.status(400).json({ error: "Name and purse are required" });
+        }
+
+        const purseInt = parseInt(purse);
+        const team = await prisma.team.create({
+            data: { name, purse: purseInt },
+        });
+        res.json(team);
+    } catch (error) {
+        console.error("Error creating team:", error);
+        res.status(500).json({ error: "Internal server error" });
     }
-
-    const purseInt = parseInt(purse);
-    const team = await prisma.team.create({
-        data: { name, purse: purseInt },
-    });
-    res.json(team);
 };
 
 // Update team purse
