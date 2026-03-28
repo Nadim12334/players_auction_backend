@@ -1,31 +1,35 @@
 import { Request, Response } from "express";
-import { prisma } from "../server";
-import { startAuctionTimer, resetAuctionTimer } from "../utils/auctionTimer";
+import { prisma, io } from "../server";
 
-/**
- * =========================
- * PLACE A BID
- * =========================
- */
+export const handleAuctionExpire = async (playerId: number) => {
+    const player = await prisma.player.findUnique({
+        where: { id: playerId },
+    });
+
+    if (!player || player.sold) return;
+
+    if (player.teamId) {
+        await prisma.player.update({
+            where: { id: playerId },
+            data: { sold: true },
+        });
+
+        io.emit("playerSold", { playerId });
+
+        console.log(`Player ${playerId} SOLD`);
+    } else {
+        console.log(`Player ${playerId} UNSOLD`);
+    }
+};
+
+// PLACE BID
 export const placeBid = async (req: Request, res: Response) => {
     const MIN_BID_INCREMENT = 50;
-
 
     try {
         const { playerId, teamId, amount } = req.body;
 
-        if (
-            typeof playerId !== "number" ||
-            typeof teamId !== "number" ||
-            typeof amount !== "number"
-        ) {
-            return res.status(400).json({
-                message: "playerId, teamId and amount must be numbers",
-            });
-        }
-
         const result = await prisma.$transaction(async (tx) => {
-
             const player = await tx.player.findUnique({
                 where: { id: playerId },
             });
@@ -39,7 +43,6 @@ export const placeBid = async (req: Request, res: Response) => {
 
             if (!team) throw new Error("Team not found");
 
-            // ✅ FIXED: Proper null check
             const minimumBid =
                 player.currentBid !== null
                     ? player.currentBid + MIN_BID_INCREMENT
@@ -53,7 +56,7 @@ export const placeBid = async (req: Request, res: Response) => {
                 throw new Error("Not enough purse balance");
             }
 
-            // Refund previous bidder
+            // Refund old team
             if (player.currentBid !== null && player.teamId !== null) {
                 await tx.team.update({
                     where: { id: player.teamId },
@@ -63,7 +66,7 @@ export const placeBid = async (req: Request, res: Response) => {
                 });
             }
 
-            // Deduct from new bidder
+            // Deduct new team
             await tx.team.update({
                 where: { id: teamId },
                 data: {
@@ -80,123 +83,54 @@ export const placeBid = async (req: Request, res: Response) => {
                 },
             });
 
-            resetAuctionTimer(playerId, handleAuctionExpire);
-
-            // Save bid history
             return await tx.bid.create({
-                data: {
-                    playerId,
-                    teamId,
-                    amount,
-                },
+                data: { playerId, teamId, amount },
             });
         });
 
-        return res.json({
+        // 🔥 Emit real-time update
+        io.emit("newBid", result);
+
+        res.json({
             message: "Bid placed successfully",
             bid: result,
         });
-
     } catch (error: any) {
-        return res.status(400).json({
-            message: error.message || "Something went wrong",
+        res.status(400).json({
+            message: error.message,
         });
     }
 };
-
-/**
- * =========================
- * START PLAYER AUCTION
- * =========================
- */
-export const startPlayerAuction = async (
-    req: Request<{ playerId: string }>,
-    res: Response
-) => {
-    const playerId = parseInt(req.params.playerId);
-
-    if (isNaN(playerId)) {
-        return res.status(400).json({ message: "Invalid playerId" });
-    }
-
-    startAuctionTimer(playerId, handleAuctionExpire);
-
-    return res.json({ message: "Auction started for player" });
-};
-
-/**
- * =========================
- * MARK PLAYER AS SOLD
- * =========================
- */
-export const markAsSold = async (
-    req: Request<{ playerId: string }>,
-    res: Response
-) => {
-    try {
-        const playerId = parseInt(req.params.playerId);
-
-        if (isNaN(playerId)) {
-            return res.status(400).json({
-                message: "Invalid playerId",
-            });
-        }
-
-        const player = await prisma.player.findUnique({
-            where: { id: playerId },
-        });
-
-        if (!player) {
-            return res.status(404).json({ message: "Player not found" });
-        }
-
-        if (player.sold) {
-            return res.status(400).json({
-                message: "Player already sold",
-            });
-        }
-
-        if (!player.teamId) {
-            return res.status(400).json({
-                message: "No bids placed yet",
-            });
-        }
-
-        const updatedPlayer = await prisma.player.update({
-            where: { id: playerId },
-            data: { sold: true },
-        });
-
-        return res.json({
-            message: "Player sold successfully",
-            player: updatedPlayer,
-        });
-
-    } catch (error) {
-        console.error(error);
-        return res.status(500).json({
-            message: "Something went wrong",
-        });
-    }
-};
-
-export const handleAuctionExpire = async (playerId: number) => {
-    const player = await prisma.player.findUnique({
-        where: { id: playerId },
+// SOLD PLAYERS
+export const getSoldPlayers = async (req: Request, res: Response) => {
+    const players = await prisma.player.findMany({
+        where: { sold: true },
+        include: { team: true },
     });
 
-    if (!player || player.sold) return;
+    res.json(players);
+};
 
-    if (player.teamId) {
-        // 🔥 At least one bid → SOLD
-        await prisma.player.update({
-            where: { id: playerId },
-            data: { sold: true },
-        });
+// UNSOLD PLAYERS
+export const getUnsoldPlayers = async (req: Request, res: Response) => {
+    const players = await prisma.player.findMany({
+        where: {
+            sold: false,
+            teamId: null,
+        },
+    });
 
-        console.log(`Player ${playerId} SOLD`);
-    } else {
-        // ❌ No bid → UNSOLD
-        console.log(`Player ${playerId} UNSOLD (No bids)`);
-    }
+    res.json(players);
+};
+
+// BID HISTORY
+export const getBidHistory = async (req: Request, res: Response) => {
+    const playerId = Number(req.params.playerId);
+
+    const bids = await prisma.bid.findMany({
+        where: { playerId },
+        orderBy: { createdAt: "desc" },
+    });
+
+    res.json(bids);
 };
