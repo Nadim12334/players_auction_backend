@@ -10,26 +10,35 @@ datasource db {
 model Player {
   id        Int     @id @default(autoincrement())
   name      String
+  photo       String @db.LongText
+  phoneNumber String
   teamId    Int?
-  team      Team?   @relation(fields: [teamId], references: [id])
+  team      Team?   @relation(fields: [teamId], references: [id], onDelete: SetNull)
   basePrice Int
   sold      Boolean @default(false)
   currentBid Int? 
   category  String
   fromWhere String
+  bids      Bid[]
 }
 
 model Team {
   id         Int      @id @default(autoincrement())
   name       String
+  logo       String @db.LongText
   purse      Int
   players    Player[]
+  bids       Bid[]
 }
 
 model Bid {
-  id        Int     @id @default(autoincrement())
-  playerId  Int
-  teamId    Int
+  id        Int      @id @default(autoincrement())
   amount    Int
   createdAt DateTime @default(now())
+  
+  playerId  Int
+  player    Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  
+  teamId    Int
+  team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
 }

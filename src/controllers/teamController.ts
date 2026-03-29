@@ -12,16 +12,15 @@ export const getTeams = async (req: Request, res: Response) => {
 // Add a new team
 export const addTeam = async (req: Request, res: Response) => {
     try {
-        const { name, purse } = req.body || {};
-        console.log("BODY:", req.body);
+        const { name, purse, logo } = req.body || {};
 
-        if (!name || !purse) {
-            return res.status(400).json({ error: "Name and purse are required" });
+        if (!name || purse === undefined || !logo) {
+            return res.status(400).json({ error: "Name, purse, and logo are required" });
         }
 
-        const purseInt = parseInt(purse);
+        const purseInt = Number(purse);
         const team = await prisma.team.create({
-            data: { name, purse: purseInt },
+            data: { name, purse: purseInt, logo },
         });
         res.json(team);
     } catch (error) {
@@ -30,21 +29,43 @@ export const addTeam = async (req: Request, res: Response) => {
     }
 };
 
-// Update team purse
-export const updateTeamPurse = async (req: Request, res: Response) => {
-    const teamId = parseInt(req.params.id as string);
-    const { purse } = req.body || {};
+// Update a team
+export const editTeam = async (req: Request, res: Response) => {
+    try {
+        const teamId = parseInt(req.params.id as string);
+        const { name, purse, logo } = req.body || {};
 
-    if (purse === undefined) {
-        return res.status(400).json({ error: "Purse is required" });
+        if (!name || purse === undefined || !logo) {
+            return res.status(400).json({ error: "Name, purse, and logo are required" });
+        }
+
+        const purseInt = Number(purse);
+        const updatedTeam = await prisma.team.update({
+            where: { id: teamId },
+            data: { name, purse: purseInt, logo },
+        });
+
+        res.json(updatedTeam);
+    } catch (error) {
+        console.error("Error updating team:", error);
+        res.status(500).json({ error: "Internal server error" });
     }
+};
 
-    const purseInt = parseInt(purse);
+// Delete a team
+export const deleteTeam = async (req: Request, res: Response) => {
+    try {
+        const teamId = parseInt(req.params.id as string);
 
-    const updatedTeam = await prisma.team.update({
-        where: { id: teamId },
-        data: { purse: purseInt },
-    });
+        // Delete related bids first if necessary, or let Prisma handle if cascade is set
+        // For simplicity, we just delete the team and assume the user understands players will lose team link
+        await prisma.team.delete({
+            where: { id: teamId },
+        });
 
-    res.json(updatedTeam);
+        res.json({ message: "Team deleted successfully" });
+    } catch (error) {
+        console.error("Error deleting team:", error);
+        res.status(500).json({ error: "Internal server error" });
+    }
 };

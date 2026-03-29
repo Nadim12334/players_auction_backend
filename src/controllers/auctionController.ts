@@ -24,8 +24,6 @@ export const handleAuctionExpire = async (playerId: number) => {
 
 // PLACE BID
 export const placeBid = async (req: Request, res: Response) => {
-    const MIN_BID_INCREMENT = 50;
-
     try {
         const { playerId, teamId, amount } = req.body;
 
@@ -43,9 +41,13 @@ export const placeBid = async (req: Request, res: Response) => {
 
             if (!team) throw new Error("Team not found");
 
+            // Dynamic increment logic: 500 below 5000, 1000 at or above 5000
+            const currentPriceForIncrement = player.currentBid !== null ? player.currentBid : player.basePrice;
+            const requiredIncrement = currentPriceForIncrement >= 5000 ? 1000 : 500;
+
             const minimumBid =
                 player.currentBid !== null
-                    ? player.currentBid + MIN_BID_INCREMENT
+                    ? player.currentBid + requiredIncrement
                     : player.basePrice;
 
             if (amount < minimumBid) {
