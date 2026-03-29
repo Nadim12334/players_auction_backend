@@ -10,8 +10,8 @@ datasource db {
 model Player {
   id        Int     @id @default(autoincrement())
   name      String
-  photo       String @db.LongText
-  phoneNumber String
+  photo       String? @db.LongText
+  phoneNumber String?
   teamId    Int?
   team      Team?   @relation(fields: [teamId], references: [id], onDelete: SetNull)
   basePrice Int
@@ -25,7 +25,7 @@ model Player {
 model Team {
   id         Int      @id @default(autoincrement())
   name       String
-  logo       String @db.LongText
+  logo       String? @db.LongText
   purse      Int
   players    Player[]
   bids       Bid[]

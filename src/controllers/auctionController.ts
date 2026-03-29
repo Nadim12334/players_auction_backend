@@ -103,6 +103,7 @@ export const placeBid = async (req: Request, res: Response) => {
         });
     }
 };
+
 // SOLD PLAYERS
 export const getSoldPlayers = async (req: Request, res: Response) => {
     const players = await prisma.player.findMany({
@@ -127,12 +128,27 @@ export const getUnsoldPlayers = async (req: Request, res: Response) => {
 
 // BID HISTORY
 export const getBidHistory = async (req: Request, res: Response) => {
-    const playerId = Number(req.params.playerId);
+    try {
+        const playerId = Number(req.params.playerId);
+        const bids = await prisma.bid.findMany({
+            where: { playerId },
+            orderBy: { createdAt: "desc" },
+        });
+        res.json(bids);
+    } catch (error: any) {
+        res.status(500).json({ message: error.message });
+    }
+};
 
-    const bids = await prisma.bid.findMany({
-        where: { playerId },
-        orderBy: { createdAt: "desc" },
-    });
-
-    res.json(bids);
+// ALL BIDS (FEED)
+export const getAllBids = async (req: Request, res: Response) => {
+    try {
+        const bids = await prisma.bid.findMany({
+            orderBy: { createdAt: "desc" },
+            take: 50,
+        });
+        res.json(bids);
+    } catch (error: any) {
+        res.status(500).json({ message: error.message });
+    }
 };
