@@ -1,5 +1,5 @@
 import { Request, Response } from "express";
-import { prisma, io } from "../server";
+import { prisma, io, auctionState } from "../server";
 
 export const handleAuctionExpire = async (playerId: number) => {
     const player = await prisma.player.findUnique({
@@ -151,4 +151,9 @@ export const getAllBids = async (req: Request, res: Response) => {
     } catch (error: any) {
         res.status(500).json({ message: error.message });
     }
+};
+
+// GET AUCTION STATE
+export const getAuctionState = async (req: Request, res: Response) => {
+    res.json(auctionState);
 };

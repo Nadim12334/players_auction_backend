@@ -1,8 +1,9 @@
 import express from "express";
-import { placeBid, getSoldPlayers, getUnsoldPlayers, getBidHistory, getAllBids } from "../controllers/auctionController";
+import { placeBid, getSoldPlayers, getUnsoldPlayers, getBidHistory, getAllBids, getAuctionState } from "../controllers/auctionController";
 
 const router = express.Router();
 
+router.get("/state", getAuctionState);
 router.post("/bid", placeBid);
 router.get("/sold", getSoldPlayers);
 router.get("/unsold", getUnsoldPlayers);
