@@ -1,5 +1,6 @@
 import { Request, Response } from "express";
 import { prisma, io, updateAuctionState } from "../server";
+import xlsx from "xlsx";
 
 export const startAuction = async (req: Request, res: Response) => {
     const playerId = Number(req.params.playerId);
@@ -148,5 +149,174 @@ export const nextPlayer = async (req: Request, res: Response) => {
             message: "No more unsold players left",
             player: null,
         });
+    }
+};
+
+export const importPlayers = async (req: Request, res: Response) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ error: "No file uploaded. Please upload an Excel or CSV file." });
+        }
+
+        // Read the file buffer
+        const workbook = xlsx.read(req.file.buffer, { type: "buffer" });
+        const sheetName = workbook.SheetNames[0];
+        const sheet = workbook.Sheets[sheetName];
+        if (!sheet) {
+            return res.status(400).json({ error: "The uploaded file has no sheets or is empty." });
+        }
+
+        // Parse sheets to JSON arrays
+        const rawRows = xlsx.utils.sheet_to_json<any>(sheet, { defval: "" });
+
+        let totalRows = 0;
+        let imported = 0;
+        let duplicates = 0;
+        let invalidRows = 0;
+        const errors: string[] = [];
+
+        // Fetch all existing phone numbers to prevent duplicates (O(1) lookup)
+        const existingPlayers = await prisma.player.findMany({
+            select: { phoneNumber: true },
+        });
+        const existingPhones = new Set<string>();
+        existingPlayers.forEach(p => {
+            if (p.phoneNumber) {
+                existingPhones.add(p.phoneNumber.toString().trim());
+            }
+        });
+
+        const seenInBatch = new Set<string>();
+
+        // Process rows one by one
+        for (let i = 0; i < rawRows.length; i++) {
+            totalRows++;
+            const row = rawRows[i];
+            const rowNum = i + 2; // Row number in Excel is 1-indexed with headers at row 1
+
+            // Find columns case-insensitively
+            let fullName: string = "";
+            let mobileNumber: string = "";
+            let category: string = "";
+            let fromWhere: string = "";
+            let photo: string = "";
+
+            for (const key of Object.keys(row)) {
+                const lowerKey = key.trim().toLowerCase();
+                const val = row[key] !== undefined && row[key] !== null ? row[key].toString().trim() : "";
+
+                if (lowerKey === "full name" || lowerKey === "name" || lowerKey === "player name" || lowerKey === "fullname") {
+                    fullName = val;
+                } else if (lowerKey === "mobile number" || lowerKey === "mobile" || lowerKey === "phone" || lowerKey === "phone number" || lowerKey === "contact" || lowerKey === "contact number" || lowerKey === "phonenumber") {
+                    mobileNumber = val;
+                } else if (lowerKey === "category" || lowerKey === "player category") {
+                    category = val;
+                } else if (lowerKey === "village / city (from where)" || lowerKey === "village / city" || lowerKey === "village" || lowerKey === "city" || lowerKey === "from where" || lowerKey === "fromwhere") {
+                    fromWhere = val;
+                } else if (lowerKey === "player photo" || lowerKey === "photo" || lowerKey === "image" || lowerKey === "player photo (optional)") {
+                    photo = val;
+                }
+            }
+
+            // Validations
+            if (!fullName) {
+                invalidRows++;
+                errors.push(`Row ${rowNum}: 'Full Name' is missing.`);
+                continue;
+            }
+
+            if (!mobileNumber) {
+                invalidRows++;
+                errors.push(`Row ${rowNum}: 'Mobile Number' is missing for player '${fullName}'.`);
+                continue;
+            }
+
+            if (!category) {
+                invalidRows++;
+                errors.push(`Row ${rowNum}: 'Category' is missing for player '${fullName}'.`);
+                continue;
+            }
+
+            if (!fromWhere) {
+                invalidRows++;
+                errors.push(`Row ${rowNum}: 'Village / City' is missing for player '${fullName}'.`);
+                continue;
+            }
+
+            // Standardize categories
+            const lowerCat = category.toLowerCase().replace(/[^a-z0-9]/g, "");
+            let mappedCategory = "";
+            if (lowerCat === "batsman" || lowerCat === "batsmen" || lowerCat === "bat") {
+                mappedCategory = "Batsman";
+            } else if (lowerCat === "bowler" || lowerCat === "bowlers" || lowerCat === "bowl") {
+                mappedCategory = "Bowler";
+            } else if (lowerCat === "allrounder" || lowerCat === "allrounders" || lowerCat === "all rounder" || lowerCat === "ar") {
+                mappedCategory = "All-Rounder";
+            } else if (lowerCat === "wicketkeeper" || lowerCat === "wicketkeepers" || lowerCat === "wk" || lowerCat === "keeper" || lowerCat === "wicket keeper") {
+                mappedCategory = "Wicket Keeper";
+            } else {
+                if (lowerCat.includes("keeper")) {
+                    mappedCategory = "Wicket Keeper";
+                } else if (lowerCat.includes("round")) {
+                    mappedCategory = "All-Rounder";
+                } else if (lowerCat.includes("bat")) {
+                    mappedCategory = "Batsman";
+                } else if (lowerCat.includes("bowl")) {
+                    mappedCategory = "Bowler";
+                } else {
+                    const standardCategories = ["Batsman", "Bowler", "All-Rounder", "Wicket Keeper"];
+                    const found = standardCategories.find(c => c.toLowerCase() === category.toLowerCase());
+                    if (found) {
+                        mappedCategory = found;
+                    }
+                }
+            }
+
+            if (!mappedCategory) {
+                invalidRows++;
+                errors.push(`Row ${rowNum}: Invalid Category '${category}' for player '${fullName}'. Must be one of Batsman, Bowler, All-Rounder, or Wicket Keeper.`);
+                continue;
+            }
+
+            // Duplicate mobile check
+            if (existingPhones.has(mobileNumber) || seenInBatch.has(mobileNumber)) {
+                duplicates++;
+                continue;
+            }
+
+            // Create player in database
+            try {
+                await prisma.player.create({
+                    data: {
+                        name: fullName,
+                        phoneNumber: mobileNumber,
+                        category: mappedCategory,
+                        fromWhere: fromWhere,
+                        photo: photo || null,
+                        basePrice: 0,
+                        sold: false,
+                        teamId: null,
+                        currentBid: null
+                    }
+                });
+                seenInBatch.add(mobileNumber);
+                imported++;
+            } catch (err: any) {
+                invalidRows++;
+                errors.push(`Row ${rowNum}: Database error while importing player '${fullName}': ${err.message || err}`);
+            }
+        }
+
+        res.json({
+            totalRows,
+            imported,
+            duplicates,
+            invalidRows,
+            errors
+        });
+
+    } catch (err: any) {
+        console.error("Bulk Import error:", err);
+        res.status(500).json({ error: err.message || "An unexpected error occurred during bulk import." });
     }
 };

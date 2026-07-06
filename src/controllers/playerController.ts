@@ -10,8 +10,8 @@ export const addPlayer = async (req: Request, res: Response) => {
     try {
         const { name, teamId, basePrice, category, fromWhere, photo, phoneNumber } = req.body || {};
 
-        if (!name || basePrice === undefined || !category || !photo || !phoneNumber) {
-            return res.status(400).json({ error: "Name, basePrice, category, photo, and phoneNumber are required" });
+        if (!name || basePrice === undefined || !category || !phoneNumber) {
+            return res.status(400).json({ error: "Name, basePrice, category, and phoneNumber are required" });
         }
 
         const player = await prisma.player.create({
@@ -21,7 +21,7 @@ export const addPlayer = async (req: Request, res: Response) => {
                 basePrice: Number(basePrice),
                 category,
                 fromWhere: fromWhere || "",
-                photo,
+                photo: photo || null,
                 phoneNumber
             },
         });
@@ -37,8 +37,8 @@ export const editPlayer = async (req: Request, res: Response) => {
         const playerId = parseInt(req.params.id as string);
         const { name, teamId, basePrice, category, fromWhere, photo, phoneNumber } = req.body || {};
 
-        if (!name || basePrice === undefined || !category || !photo || !phoneNumber) {
-            return res.status(400).json({ error: "Name, basePrice, category, photo, and phoneNumber are required" });
+        if (!name || basePrice === undefined || !category || !phoneNumber) {
+            return res.status(400).json({ error: "Name, basePrice, category, and phoneNumber are required" });
         }
 
         const player = await prisma.player.update({
@@ -49,7 +49,7 @@ export const editPlayer = async (req: Request, res: Response) => {
                 basePrice: Number(basePrice),
                 category,
                 fromWhere: fromWhere || "",
-                photo,
+                photo: photo || null,
                 phoneNumber
             },
         });

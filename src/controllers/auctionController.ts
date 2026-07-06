@@ -41,17 +41,18 @@ export const placeBid = async (req: Request, res: Response) => {
 
             if (!team) throw new Error("Team not found");
 
-            // Dynamic increment logic: 500 below 5000, 1000 at or above 5000
-            const currentPriceForIncrement = player.currentBid !== null ? player.currentBid : player.basePrice;
-            const requiredIncrement = currentPriceForIncrement >= 5000 ? 1000 : 500;
-
+            // Validate: new bid must be strictly greater than current bid (or >= basePrice for opening)
             const minimumBid =
                 player.currentBid !== null
-                    ? player.currentBid + requiredIncrement
+                    ? player.currentBid + 1
                     : player.basePrice;
 
             if (amount < minimumBid) {
-                throw new Error(`Bid must be at least ${minimumBid}`);
+                throw new Error(
+                    player.currentBid !== null
+                        ? `Bid must be greater than the current bid of ${player.currentBid}`
+                        : `Opening bid must be at least ${player.basePrice}`
+                );
             }
 
             if (team.purse < amount) {
