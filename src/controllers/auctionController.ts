@@ -37,9 +37,26 @@ export const placeBid = async (req: Request, res: Response) => {
 
             const team = await tx.team.findUnique({
                 where: { id: teamId },
+                include: { players: true }
             });
 
             if (!team) throw new Error("Team not found");
+
+            // Dynamic Maximum Available Bid Calculation
+            const MIN_PLAYERS_REQUIRED = 8;
+            const MIN_BASE_PRICE = 500;
+
+            const purchasedCount = team.players.filter(p => p.sold).length;
+            const requiredPlayersCount = Math.max(0, MIN_PLAYERS_REQUIRED - purchasedCount);
+
+            // If the team placing the bid is already the leading bidder on this player,
+            // their current bid is returned to their purse first before the new bid amount is placed.
+            const isLeadingBidder = player.teamId === teamId;
+            const effectivePurse = isLeadingBidder && player.currentBid !== null
+                ? team.purse + player.currentBid
+                : team.purse;
+
+            const maxAvailableBid = effectivePurse - (requiredPlayersCount * MIN_BASE_PRICE);
 
             // Validate: new bid must be strictly greater than current bid (or >= basePrice for opening)
             const minimumBid =
@@ -55,7 +72,11 @@ export const placeBid = async (req: Request, res: Response) => {
                 );
             }
 
-            if (team.purse < amount) {
+            if (amount > maxAvailableBid) {
+                throw new Error(`Maximum allowed bid is ₹${maxAvailableBid.toLocaleString()}.`);
+            }
+
+            if (effectivePurse < amount) {
                 throw new Error("Not enough purse balance");
             }
 

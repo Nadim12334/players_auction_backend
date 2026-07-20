@@ -293,7 +293,7 @@ export const importPlayers = async (req: Request, res: Response) => {
                         category: mappedCategory,
                         fromWhere: fromWhere,
                         photo: photo || null,
-                        basePrice: 0,
+                        basePrice: 500,
                         sold: false,
                         teamId: null,
                         currentBid: null
