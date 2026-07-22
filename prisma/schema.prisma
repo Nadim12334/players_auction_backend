@@ -7,19 +7,38 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model Team {
-  id      Int      @id @default(autoincrement())
-  name    String   @unique
-  budget  Int
-  players Player[]
-}
-
 model Player {
   id        Int     @id @default(autoincrement())
   name      String
+  photo       String? @db.LongText
+  phoneNumber String?
+  teamId    Int?
+  team      Team?   @relation(fields: [teamId], references: [id], onDelete: SetNull)
   basePrice Int
   sold      Boolean @default(false)
+  currentBid Int? 
+  category  String
+  fromWhere String
+  bids      Bid[]
+}
 
-  teamId Int?
-  team   Team? @relation(fields: [teamId], references: [id])
+model Team {
+  id         Int      @id @default(autoincrement())
+  name       String
+  logo       String? @db.LongText
+  purse      Int
+  players    Player[]
+  bids       Bid[]
+}
+
+model Bid {
+  id        Int      @id @default(autoincrement())
+  amount    Int
+  createdAt DateTime @default(now())
+  
+  playerId  Int
+  player    Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  
+  teamId    Int
+  team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
 }
