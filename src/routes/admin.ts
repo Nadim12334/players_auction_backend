@@ -5,7 +5,11 @@ import {
     sellPlayer,
     markUnsold,
     nextPlayer,
-    importPlayers
+    importPlayers,
+    getUnsoldPlayers,
+    auctionUnsoldNow,
+    moveUnsoldToEnd,
+    removeUnsoldPlayer
 } from "../controllers/adminController";
 
 const router = express.Router();
@@ -16,5 +20,11 @@ router.post("/auction/sell/:playerId", sellPlayer);
 router.post("/auction/unsold/:playerId", markUnsold);
 router.post("/auction/next", nextPlayer);
 router.post("/players/import", upload.single("file"), importPlayers);
+
+// Unsold Players Management Routes
+router.get("/unsold-players", getUnsoldPlayers);
+router.post("/unsold-players/:id/auction-now", auctionUnsoldNow);
+router.post("/unsold-players/:id/move-to-end", moveUnsoldToEnd);
+router.delete("/unsold-players/:id", removeUnsoldPlayer);
 
 export default router;

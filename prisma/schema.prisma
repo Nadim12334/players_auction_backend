@@ -7,38 +7,43 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model Player {
-  id        Int     @id @default(autoincrement())
-  name      String
-  photo       String? @db.LongText
-  phoneNumber String?
-  teamId    Int?
-  team      Team?   @relation(fields: [teamId], references: [id], onDelete: SetNull)
-  basePrice Int
-  sold      Boolean @default(false)
-  currentBid Int? 
-  category  String
-  fromWhere String
-  bids      Bid[]
-}
-
-model Team {
-  id         Int      @id @default(autoincrement())
-  name       String
-  logo       String? @db.LongText
-  purse      Int
-  players    Player[]
-  bids       Bid[]
-}
-
-model Bid {
+model bid {
   id        Int      @id @default(autoincrement())
+  playerId  Int
+  teamId    Int
   amount    Int
   createdAt DateTime @default(now())
-  
-  playerId  Int
-  player    Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
-  
-  teamId    Int
-  team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  player    player   @relation(fields: [playerId], references: [id], onDelete: Cascade, map: "Bid_playerId_fkey")
+  team      team     @relation(fields: [teamId], references: [id], onDelete: Cascade, map: "Bid_teamId_fkey")
+
+  @@index([playerId], map: "Bid_playerId_fkey")
+  @@index([teamId], map: "Bid_teamId_fkey")
+}
+
+model player {
+  id          Int     @id @default(autoincrement())
+  name        String
+  teamId      Int?
+  basePrice   Int
+  sold        Boolean @default(false)
+  currentBid  Int?
+  category    String
+  fromWhere   String
+  phoneNumber String?
+  photo       String? @db.LongText
+  status      String  @default("AVAILABLE")
+  queueOrder  Int     @default(0)
+  bids        bid[]
+  team        team?   @relation(fields: [teamId], references: [id], map: "Player_teamId_fkey")
+
+  @@index([teamId], map: "Player_teamId_fkey")
+}
+
+model team {
+  id      Int      @id @default(autoincrement())
+  name    String
+  purse   Int
+  logo    String?  @db.LongText
+  bids    bid[]
+  players player[]
 }
