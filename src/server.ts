@@ -26,12 +26,14 @@ import teamRoutes from "./routes/teams";
 import auctionRoutes from "./routes/auction";
 import statsRoutes from "./routes/stats";
 import adminRoutes from "./routes/admin";
+import settingsRoutes from "./routes/settings";
 
 app.use("/api/players", playerRoutes);
 app.use("/api/teams", teamRoutes);
 app.use("/api/auction", auctionRoutes);
 app.use("/api/stats", statsRoutes);
 app.use("/api/admin", adminRoutes);
+app.use("/api/settings", settingsRoutes);
 
 app.get("/", (req, res) => {
     res.send("Backend is running!");
