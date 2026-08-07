@@ -1,5 +1,5 @@
 import { Request, Response } from "express";
-import { prisma, io, updateAuctionState } from "../server";
+import { prisma, io, updateAuctionState, auctionState } from "../server";
 import xlsx from "xlsx";
 
 export const startAuction = async (req: Request, res: Response) => {
@@ -18,6 +18,7 @@ export const startAuction = async (req: Request, res: Response) => {
         where: { id: playerId },
         data: {
             sold: false,
+            status: "LIVE",
             teamId: null,
             currentBid: null,
         },
@@ -31,6 +32,7 @@ export const startAuction = async (req: Request, res: Response) => {
     updateAuctionState({ currentPlayerId: playerId, status: "BIDDING" });
 
     io.emit("auctionStarted", { playerId });
+    io.emit("unsoldUpdated");
 
     res.json({
         message: "Auction started",
@@ -55,12 +57,16 @@ export const sellPlayer = async (req: Request, res: Response) => {
 
     const player = await prisma.player.update({
         where: { id: playerId },
-        data: { sold: true },
+        data: {
+            sold: true,
+            status: "SOLD",
+        },
     });
 
     updateAuctionState({ status: "SOLD" });
 
     io.emit("playerSold", { playerId, sold: true });
+    io.emit("unsoldUpdated");
 
     res.json({
         message: "Player sold successfully",
@@ -95,7 +101,8 @@ export const markUnsold = async (req: Request, res: Response) => {
     const player = await prisma.player.update({
         where: { id: playerId },
         data: {
-            sold: true,
+            sold: false,
+            status: "UNSOLD",
             teamId: null,
             currentBid: null,
         },
@@ -104,6 +111,7 @@ export const markUnsold = async (req: Request, res: Response) => {
     updateAuctionState({ status: "UNSOLD" });
 
     io.emit("playerSold", { playerId, sold: false });
+    io.emit("unsoldUpdated");
 
     res.json({
         message: "Player marked as unsold",
@@ -112,20 +120,27 @@ export const markUnsold = async (req: Request, res: Response) => {
 };
 
 export const nextPlayer = async (req: Request, res: Response) => {
-    // Find the first unsold player in the database
+    // Find the first available player in the database
     const player = await prisma.player.findFirst({
-        where: { sold: false },
-        orderBy: { id: "asc" },
+        where: {
+            sold: false,
+            status: "AVAILABLE",
+        },
+        orderBy: [
+            { queueOrder: "asc" },
+            { id: "asc" }
+        ],
     });
 
     if (player) {
-        // Reset player in database just in case
-        await prisma.player.update({
+        // Reset player in database
+        const updatedPlayer = await prisma.player.update({
             where: { id: player.id },
             data: {
                 currentBid: null,
                 teamId: null,
                 sold: false,
+                status: "LIVE",
             }
         });
 
@@ -136,10 +151,11 @@ export const nextPlayer = async (req: Request, res: Response) => {
 
         updateAuctionState({ currentPlayerId: player.id, status: "IDLE" });
         io.emit("auctionNext", { playerId: player.id });
+        io.emit("unsoldUpdated");
 
         return res.json({
             message: "Next player loaded successfully",
-            player,
+            player: updatedPlayer,
         });
     } else {
         updateAuctionState({ currentPlayerId: null, status: "IDLE" });
@@ -149,6 +165,133 @@ export const nextPlayer = async (req: Request, res: Response) => {
             message: "No more unsold players left",
             player: null,
         });
+    }
+};
+
+// GET /api/admin/unsold-players
+export const getUnsoldPlayers = async (req: Request, res: Response) => {
+    try {
+        const players = await prisma.player.findMany({
+            where: {
+                OR: [
+                    { status: "UNSOLD" },
+                    { sold: true, teamId: null }
+                ]
+            },
+            orderBy: { id: "desc" }
+        });
+        res.json(players);
+    } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
+};
+
+// POST /api/admin/unsold-players/:id/auction-now
+export const auctionUnsoldNow = async (req: Request, res: Response) => {
+    try {
+        const id = Number(req.params.id);
+        const player = await prisma.player.findUnique({ where: { id } });
+
+        if (!player) {
+            return res.status(404).json({ message: "Player not found" });
+        }
+
+        // Reset player state & bids
+        const updatedPlayer = await prisma.player.update({
+            where: { id },
+            data: {
+                status: "LIVE",
+                sold: false,
+                teamId: null,
+                currentBid: null,
+            }
+        });
+
+        await prisma.bid.deleteMany({ where: { playerId: id } });
+
+        updateAuctionState({ currentPlayerId: id, status: "BIDDING" });
+
+        io.emit("auctionStarted", { playerId: id });
+        io.emit("playerRecalled", { player: updatedPlayer, mode: "AUCTION_NOW" });
+        io.emit("unsoldUpdated");
+
+        res.json({
+            message: "Player loaded for auction now",
+            player: updatedPlayer
+        });
+    } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
+};
+
+// POST /api/admin/unsold-players/:id/move-to-end
+export const moveUnsoldToEnd = async (req: Request, res: Response) => {
+    try {
+        const id = Number(req.params.id);
+        const player = await prisma.player.findUnique({ where: { id } });
+
+        if (!player) {
+            return res.status(404).json({ message: "Player not found" });
+        }
+
+        // Find highest queueOrder or id
+        const maxOrderResult = await prisma.player.aggregate({
+            _max: { queueOrder: true }
+        });
+        const maxIdResult = await prisma.player.aggregate({
+            _max: { id: true }
+        });
+        const currentMax = Math.max(
+            maxOrderResult._max.queueOrder || 0,
+            maxIdResult._max.id || 0
+        );
+
+        const updatedPlayer = await prisma.player.update({
+            where: { id },
+            data: {
+                status: "AVAILABLE",
+                sold: false,
+                teamId: null,
+                currentBid: null,
+                queueOrder: currentMax + 1
+            }
+        });
+
+        await prisma.bid.deleteMany({ where: { playerId: id } });
+
+        io.emit("playerRecalled", { player: updatedPlayer, mode: "MOVE_TO_END" });
+        io.emit("unsoldUpdated");
+
+        res.json({
+            message: "Player moved to end of auction queue",
+            player: updatedPlayer
+        });
+    } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
+};
+
+// DELETE /api/admin/unsold-players/:id
+export const removeUnsoldPlayer = async (req: Request, res: Response) => {
+    try {
+        const id = Number(req.params.id);
+        const player = await prisma.player.findUnique({ where: { id } });
+
+        if (!player) {
+            return res.status(404).json({ message: "Player not found" });
+        }
+
+        if (auctionState.currentPlayerId === id) {
+            updateAuctionState({ currentPlayerId: null, status: "IDLE" });
+        }
+
+        await prisma.player.delete({ where: { id } });
+
+        io.emit("unsoldUpdated");
+
+        res.json({ message: "Player permanently removed from tournament auction" });
+    } catch (error: any) {
+        res.status(500).json({ error: error.message });
     }
 };
 
