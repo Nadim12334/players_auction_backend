@@ -47,3 +47,14 @@ model team {
   bids    bid[]
   players player[]
 }
+
+model TournamentSettings {
+  id               Int      @id @default(autoincrement())
+  tournamentName   String   @default("Kudal Premier League")
+  tournamentLogo   String?  @db.LongText
+  season           String?  @default("Season 1")
+  whatsappTemplate String   @db.Text
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
+
