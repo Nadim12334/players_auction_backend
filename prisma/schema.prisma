@@ -7,54 +7,75 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model bid {
-  id        Int      @id @default(autoincrement())
-  playerId  Int
-  teamId    Int
-  amount    Int
-  createdAt DateTime @default(now())
-  player    player   @relation(fields: [playerId], references: [id], onDelete: Cascade, map: "Bid_playerId_fkey")
-  team      team     @relation(fields: [teamId], references: [id], onDelete: Cascade, map: "Bid_teamId_fkey")
+model tournament {
+  id               Int      @id @default(autoincrement())
+  name             String   @default("Kudal Premier League") @map("tournamentName")
+  slug             String   @unique @default("kudal-premier-league")
+  logo             String?  @map("tournamentLogo") @db.LongText
+  season           String?  @default("Season 1")
+  status           String   @default("NOT_STARTED")
+  registrationOpen Boolean  @default(true)
+  whatsappTemplate String   @db.Text
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 
+  players          player[]
+  teams            team[]
+  bids             bid[]
+
+  @@map("TournamentSettings")
+}
+
+model bid {
+  id           Int        @id @default(autoincrement())
+  tournamentId Int        @default(1)
+  playerId     Int
+  teamId       Int
+  amount       Int
+  createdAt    DateTime   @default(now())
+  tournament   tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade, map: "Bid_tournamentId_fkey")
+  player       player     @relation(fields: [playerId], references: [id], onDelete: Cascade, map: "Bid_playerId_fkey")
+  team         team       @relation(fields: [teamId], references: [id], onDelete: Cascade, map: "Bid_teamId_fkey")
+
+  @@index([tournamentId], map: "Bid_tournamentId_fkey")
   @@index([playerId], map: "Bid_playerId_fkey")
   @@index([teamId], map: "Bid_teamId_fkey")
 }
 
 model player {
-  id          Int     @id @default(autoincrement())
-  name        String
-  teamId      Int?
-  basePrice   Int
-  sold        Boolean @default(false)
-  currentBid  Int?
-  category    String
-  fromWhere   String
-  phoneNumber String?
-  photo       String? @db.LongText
-  status      String  @default("AVAILABLE")
-  queueOrder  Int     @default(0)
-  bids        bid[]
-  team        team?   @relation(fields: [teamId], references: [id], map: "Player_teamId_fkey")
+  id             Int        @id @default(autoincrement())
+  tournamentId   Int        @default(1)
+  name           String
+  teamId         Int?
+  basePrice      Int
+  sold           Boolean    @default(false)
+  currentBid     Int?
+  category       String
+  fromWhere      String
+  phoneNumber    String?
+  photo          String?    @db.LongText
+  status         String     @default("AVAILABLE")
+  queueOrder     Int        @default(0)
+  tournamentSlug String?    @default("kudal-premier-league")
+  tournament     tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade, map: "Player_tournamentId_fkey")
+  bids           bid[]
+  team           team?      @relation(fields: [teamId], references: [id], map: "Player_teamId_fkey")
 
+  @@index([tournamentId], map: "Player_tournamentId_fkey")
   @@index([teamId], map: "Player_teamId_fkey")
+  @@index([phoneNumber, tournamentSlug], map: "Player_phoneNumber_tournamentSlug_idx")
+  @@index([phoneNumber, tournamentId], map: "Player_phoneNumber_tournamentId_idx")
 }
 
 model team {
-  id      Int      @id @default(autoincrement())
-  name    String
-  purse   Int
-  logo    String?  @db.LongText
-  bids    bid[]
-  players player[]
-}
+  id           Int        @id @default(autoincrement())
+  tournamentId Int        @default(1)
+  name         String
+  purse        Int
+  logo         String?    @db.LongText
+  tournament   tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade, map: "Team_tournamentId_fkey")
+  bids         bid[]
+  players      player[]
 
-model TournamentSettings {
-  id               Int      @id @default(autoincrement())
-  tournamentName   String   @default("Kudal Premier League")
-  tournamentLogo   String?  @db.LongText
-  season           String?  @default("Season 1")
-  whatsappTemplate String   @db.Text
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  @@index([tournamentId], map: "Team_tournamentId_fkey")
 }
-

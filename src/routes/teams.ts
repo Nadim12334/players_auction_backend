@@ -8,9 +8,11 @@ import {
 
 const router = Router();
 
-router.get("/", getTeams);               // List all teams
-router.post("/", addTeam);               // Add a new team
-router.put("/:id", editTeam);            // Edit a team
-router.delete("/:id", deleteTeam);      // Delete a team
+router.get("/", getTeams);
+router.get("/tournament/:tournamentId", getTeams);
+router.post("/", addTeam);
+router.post("/tournament/:tournamentId", addTeam);
+router.put("/:id", editTeam);
+router.delete("/:id", deleteTeam);
 
 export default router;

@@ -2,17 +2,15 @@ import { prisma } from "../prisma";
 import { io } from "../server";
 
 export const handleBid = async (bidData: any) => {
-    // Logic for processing bid
-    // This is a placeholder for actual business logic
-    const { playerId, teamId, amount } = bidData;
+    const { playerId, teamId, amount, tournamentId } = bidData;
+    const tId = Number(tournamentId || 1);
 
-    // Emit updates via Socket.io
-    io.emit("newBid", { playerId, teamId, amount });
+    // Emit updates via Socket.io room
+    io.to(`auction_${tId}`).emit("newBid", { playerId, teamId, amount, tournamentId: tId });
 
     return { success: true, message: "Bid placed successfully" };
 };
 
 export const getStatus = async () => {
-    // Logic for getting auction status
     return { status: "active", currentItem: null };
 };
