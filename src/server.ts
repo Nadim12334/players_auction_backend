@@ -109,6 +109,31 @@ export const emitToTournament = (tournamentId: number, event: string, data?: any
     io.to(`auction_${tournamentId}`).emit(event, data);
 };
 
+// Safely evicts clients and cleans up state when a tournament is archived or deleted
+export const cleanupTournamentSocket = (tournamentId: number, action: "deleted" | "archived" = "deleted") => {
+    const room = `auction_${tournamentId}`;
+    try {
+        if (action === "deleted") {
+            io.to(room).emit("tournamentDeleted", {
+                tournamentId,
+                message: "This tournament has been permanently deleted.",
+            });
+            io.in(room).socketsLeave(room);
+            tournamentAuctionStates.delete(tournamentId);
+            console.log(`[Socket] Evicted all clients and cleaned state for deleted tournament ${tournamentId}`);
+        } else if (action === "archived") {
+            io.to(room).emit("tournamentArchived", {
+                tournamentId,
+                message: "This tournament has been archived.",
+            });
+            updateAuctionState(tournamentId, { status: "IDLE", currentPlayerId: null });
+            console.log(`[Socket] Broadcasted archive event and reset state for tournament ${tournamentId}`);
+        }
+    } catch (err) {
+        console.error(`[Socket] Error cleaning up socket room for tournament ${tournamentId}:`, err);
+    }
+};
+
 io.on("connection", (socket) => {
     console.log("Client connected:", socket.id);
 

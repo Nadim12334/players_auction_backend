@@ -9,18 +9,26 @@ if (!fs.existsSync(UPLOADS_DIR)) {
   fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 }
 
-// 1. Get Public Tournament Details for Registration Page
+// 1. Get Public Tournament Details for Registration Page by ID or Slug
 export const getPublicTournamentInfo = async (req: Request, res: Response) => {
   try {
-    const rawSlug = (String(req.params.slug || req.query.slug || "kudal-premier-league")).toLowerCase();
+    const rawTarget = String(
+      req.params.identifier || req.params.slug || req.query.slug || req.query.tournamentId || ""
+    ).trim();
 
-    let tournament = await prisma.tournament.findUnique({
-      where: { slug: rawSlug },
-    });
-
-    if (!tournament) {
-      tournament = await prisma.tournament.findFirst();
+    if (!rawTarget) {
+      return res.status(404).json({ error: "Tournament not found" });
     }
+
+    const isNumeric = !isNaN(Number(rawTarget)) && Number(rawTarget) > 0;
+
+    const tournament = isNumeric
+      ? await prisma.tournament.findUnique({
+          where: { id: Number(rawTarget) },
+        })
+      : await prisma.tournament.findUnique({
+          where: { slug: rawTarget.toLowerCase() },
+        });
 
     if (!tournament) {
       return res.status(404).json({ error: "Tournament not found" });
@@ -41,25 +49,37 @@ export const getPublicTournamentInfo = async (req: Request, res: Response) => {
   }
 };
 
-// 2. Public Player Registration API
+// 2. Public Player Registration API (Multi-Tournament Isolated)
 export const registerPlayer = async (req: Request, res: Response) => {
   try {
-    const { name, phoneNumber, category, fromWhere, tournamentSlug, tournamentId, photo: base64Photo } = req.body;
-    const targetSlug = (tournamentSlug || req.params.slug || "").toLowerCase();
+    const {
+      name,
+      phoneNumber,
+      category,
+      fromWhere,
+      battingStyle,
+      bowlingStyle,
+      age,
+      tournamentSlug,
+      tournamentId,
+      photo: base64Photo,
+    } = req.body;
 
-    let targetTournament;
-    if (tournamentId) {
-      targetTournament = await prisma.tournament.findUnique({
-        where: { id: Number(tournamentId) },
-      });
-    } else if (targetSlug) {
-      targetTournament = await prisma.tournament.findUnique({
-        where: { slug: targetSlug },
-      });
-    }
+    const rawTarget = String(
+      req.params.identifier || req.params.tournamentId || req.params.slug || tournamentId || tournamentSlug || ""
+    ).trim();
 
-    if (!targetTournament) {
-      targetTournament = await prisma.tournament.findFirst();
+    const isNumeric = !isNaN(Number(rawTarget)) && Number(rawTarget) > 0;
+
+    let targetTournament = null;
+    if (isNumeric) {
+      targetTournament = await prisma.tournament.findUnique({
+        where: { id: Number(rawTarget) },
+      });
+    } else if (rawTarget) {
+      targetTournament = await prisma.tournament.findUnique({
+        where: { slug: rawTarget.toLowerCase() },
+      });
     }
 
     if (!targetTournament) {
@@ -67,7 +87,9 @@ export const registerPlayer = async (req: Request, res: Response) => {
     }
 
     if (!targetTournament.registrationOpen) {
-      return res.status(403).json({ error: "Player registration is currently closed for this tournament." });
+      return res.status(403).json({
+        error: "Registration is currently closed for this tournament.",
+      });
     }
 
     // Validate Mandatory Fields
@@ -81,14 +103,14 @@ export const registerPlayer = async (req: Request, res: Response) => {
     }
 
     if (!category || !category.trim()) {
-      return res.status(400).json({ error: "Category is required." });
+      return res.status(400).json({ error: "Playing Category is required." });
     }
 
     if (!fromWhere || !fromWhere.trim()) {
-      return res.status(400).json({ error: "Village / City is required." });
+      return res.status(400).json({ error: "Village / From Where is required." });
     }
 
-    // Process Photo File (Multer file upload or Base64 string)
+    // Process Photo File (Multer disk storage or Base64 string)
     let photoPath = "";
     if (req.file) {
       photoPath = `/uploads/players/${req.file.filename}`;
@@ -111,7 +133,7 @@ export const registerPlayer = async (req: Request, res: Response) => {
       return res.status(400).json({ error: "Player Photo is required." });
     }
 
-    // Prevent duplicate mobile registrations strictly within this tournament
+    // Prevent duplicate mobile registrations strictly within THIS tournament
     const existingPlayer = await prisma.player.findFirst({
       where: {
         phoneNumber: cleanPhone,
@@ -121,11 +143,11 @@ export const registerPlayer = async (req: Request, res: Response) => {
 
     if (existingPlayer) {
       return res.status(400).json({
-        error: "This mobile number is already registered for this tournament.",
+        error: `This mobile number is already registered for ${targetTournament.name}.`,
       });
     }
 
-    // Create player record
+    // Create player record strictly linked to this tournament
     const newPlayer = await prisma.player.create({
       data: {
         tournamentId: targetTournament.id,
@@ -134,6 +156,9 @@ export const registerPlayer = async (req: Request, res: Response) => {
         phoneNumber: cleanPhone,
         category: category.trim(),
         fromWhere: fromWhere.trim(),
+        battingStyle: battingStyle ? battingStyle.trim() : null,
+        bowlingStyle: bowlingStyle ? bowlingStyle.trim() : null,
+        age: age && !isNaN(Number(age)) ? Number(age) : null,
         photo: photoPath,
         basePrice: 500,
         sold: false,
@@ -148,6 +173,7 @@ export const registerPlayer = async (req: Request, res: Response) => {
     res.status(201).json({
       success: true,
       message: "Registration completed successfully",
+      registrationId: newPlayer.id,
       player: newPlayer,
     });
   } catch (error: any) {
@@ -156,7 +182,7 @@ export const registerPlayer = async (req: Request, res: Response) => {
   }
 };
 
-// 3. Admin: Get all registrations with search and filter
+// 3. Admin: Get all registrations with search, filter, and tournament isolation
 export const getRegistrations = async (req: Request, res: Response) => {
   try {
     const { search, category, village, tournamentSlug, tournamentId } = req.query;
@@ -188,7 +214,7 @@ export const getRegistrations = async (req: Request, res: Response) => {
 
     const players = await prisma.player.findMany({
       where,
-      include: { team: true },
+      include: { team: true, tournament: { select: { id: true, name: true, slug: true } } },
       orderBy: { id: "desc" },
     });
 
@@ -205,7 +231,7 @@ export const getRegistrationById = async (req: Request, res: Response) => {
     const id = Number(req.params.id);
     const player = await prisma.player.findUnique({
       where: { id },
-      include: { team: true },
+      include: { team: true, tournament: { select: { id: true, name: true, slug: true } } },
     });
 
     if (!player) {
@@ -223,7 +249,7 @@ export const getRegistrationById = async (req: Request, res: Response) => {
 export const updateRegistration = async (req: Request, res: Response) => {
   try {
     const id = Number(req.params.id);
-    const { name, phoneNumber, category, fromWhere, photo, basePrice } = req.body;
+    const { name, phoneNumber, category, fromWhere, photo, basePrice, battingStyle, bowlingStyle, age } = req.body;
 
     const existing = await prisma.player.findUnique({ where: { id } });
     if (!existing) {
@@ -239,6 +265,9 @@ export const updateRegistration = async (req: Request, res: Response) => {
         fromWhere: fromWhere ? fromWhere.trim() : undefined,
         photo: photo !== undefined ? photo : undefined,
         basePrice: basePrice !== undefined ? Number(basePrice) : undefined,
+        battingStyle: battingStyle !== undefined ? (battingStyle ? battingStyle.trim() : null) : undefined,
+        bowlingStyle: bowlingStyle !== undefined ? (bowlingStyle ? bowlingStyle.trim() : null) : undefined,
+        age: age !== undefined ? (age && !isNaN(Number(age)) ? Number(age) : null) : undefined,
       },
       include: { team: true },
     });

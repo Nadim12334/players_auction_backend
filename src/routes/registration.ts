@@ -46,11 +46,13 @@ const upload = multer({
 
 const router = Router();
 
-// Public Routes
-router.get("/tournaments/public/:slug", getPublicTournamentInfo);
+// Public Routes (Accepts numeric tournamentId or slug)
+router.get("/tournaments/public/:identifier", getPublicTournamentInfo);
 router.get("/tournaments/public", getPublicTournamentInfo);
+
 router.post("/register", upload.single("photoFile"), registerPlayer);
-router.post("/register/:slug", upload.single("photoFile"), registerPlayer);
+router.post("/register/:identifier", upload.single("photoFile"), registerPlayer);
+router.post("/registrations/:identifier", upload.single("photoFile"), registerPlayer);
 
 // Admin Routes
 router.get("/admin/registrations", getRegistrations);

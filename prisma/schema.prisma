@@ -54,6 +54,9 @@ model player {
   fromWhere      String
   phoneNumber    String?
   photo          String?    @db.LongText
+  battingStyle   String?
+  bowlingStyle   String?
+  age            Int?
   status         String     @default("AVAILABLE")
   queueOrder     Int        @default(0)
   tournamentSlug String?    @default("kudal-premier-league")

@@ -14,6 +14,13 @@ import {
     exportPlayerRegistrationList,
     exportAuctionResults,
 } from "../controllers/adminController";
+import {
+    deleteTournament,
+    archiveTournament,
+    restoreTournament,
+    completeTournament,
+    toggleRegistration,
+} from "../controllers/tournamentController";
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage() });
@@ -44,8 +51,13 @@ router.post("/unsold-players/:id/auction-now", auctionUnsoldNow);
 router.post("/unsold-players/:id/move-to-end", moveUnsoldToEnd);
 router.delete("/unsold-players/:id", removeUnsoldPlayer);
 
-// Tournaments List
+// Tournaments Management
 router.get("/tournaments", getTournamentsList);
+router.delete("/tournaments/:tournamentId", deleteTournament);
+router.post("/tournaments/:tournamentId/archive", archiveTournament);
+router.post("/tournaments/:tournamentId/restore", restoreTournament);
+router.post("/tournaments/:tournamentId/complete", completeTournament);
+router.post("/tournaments/:tournamentId/toggle-registration", toggleRegistration);
 
 // Export Routes (Supports query ?tournamentId= and path /:tournamentId)
 router.get("/export/players", exportPlayerRegistrationList);
