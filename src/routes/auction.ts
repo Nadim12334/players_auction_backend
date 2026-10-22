@@ -6,9 +6,15 @@ import {
     getBidHistory,
     getAllBids,
     getAuctionState,
+    getCurrentAuctionPlayer,
 } from "../controllers/auctionController";
 
 const router = express.Router();
+
+// Current Auction Player
+router.get("/current", getCurrentAuctionPlayer);
+router.get("/tournament/:tournamentId/current", getCurrentAuctionPlayer);
+router.get("/:tournamentId/current", getCurrentAuctionPlayer);
 
 // Auction State
 router.get("/state", getAuctionState);

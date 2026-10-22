@@ -124,3 +124,20 @@ export const deletePlayer = async (req: Request, res: Response) => {
         res.status(500).json({ error: error.message || "Internal server error" });
     }
 };
+
+export const getTournamentQueue = async (req: Request, res: Response) => {
+    try {
+        const tournamentId = Number(req.params.tournamentId || req.params.id || req.query.tournamentId || 1);
+        const players = await prisma.player.findMany({
+            where: {
+                tournamentId,
+                sold: false,
+                status: "AVAILABLE",
+            },
+            orderBy: [{ queueOrder: "asc" }, { id: "asc" }],
+        });
+        res.json(players);
+    } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
+};

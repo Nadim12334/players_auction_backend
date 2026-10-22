@@ -41,13 +41,6 @@ export const placeBid = async (req: Request, res: Response) => {
                 ? Number(requestedTournamentId)
                 : player.tournamentId;
 
-            // Strict tournament isolation check for player
-            if (player.tournamentId !== tournamentId) {
-                throw new Error(
-                    `Player #${playerId} belongs to Tournament ${player.tournamentId}, not Tournament ${tournamentId}. Cross-tournament bidding is blocked.`
-                );
-            }
-
             const team = await tx.team.findUnique({
                 where: { id: Number(teamId) },
                 include: { players: true },
@@ -55,11 +48,9 @@ export const placeBid = async (req: Request, res: Response) => {
 
             if (!team) throw new Error("Team not found");
 
-            // Strict tournament isolation check for team
-            if (team.tournamentId !== tournamentId) {
-                throw new Error(
-                    `Team #${teamId} belongs to Tournament ${team.tournamentId}, not Tournament ${tournamentId}. Cross-tournament bidding is blocked.`
-                );
+            // Strict tournament isolation: Player and team must belong to the exact same tournament
+            if (player.tournamentId !== tournamentId || team.tournamentId !== tournamentId || player.tournamentId !== team.tournamentId) {
+                throw new Error("Player and team must belong to the same tournament.");
             }
 
             // Dynamic Maximum Available Bid Calculation
@@ -148,9 +139,12 @@ export const placeBid = async (req: Request, res: Response) => {
         });
 
         // 🔥 Emit real-time update ONLY to the tournament's room
-        const roomName = `auction_${result.tournamentId}`;
-        io.to(roomName).emit("newBid", result.createdBid);
-        io.to(roomName).emit("updateBid", result.createdBid);
+        io.to(`tournament_${result.tournamentId}`).to(`auction_${result.tournamentId}`).emit("newBid", result.createdBid);
+        io.to(`tournament_${result.tournamentId}`).to(`auction_${result.tournamentId}`).emit("updateBid", result.createdBid);
+        io.to(`tournament_${result.tournamentId}`).to(`auction_${result.tournamentId}`).emit("currentPlayerUpdated", {
+            tournamentId: result.tournamentId,
+            player: result.createdBid.player ? { ...result.createdBid.player, currentBid: result.createdBid.amount, teamId: result.createdBid.teamId, team: result.createdBid.team } : null,
+        });
 
         res.json({
             message: "Bid placed successfully",
@@ -249,4 +243,193 @@ export const getAuctionState = async (req: Request, res: Response) => {
     );
     const state = getTournamentAuctionState(tournamentId);
     res.json(state);
+};
+
+// GET AUCTION STATE & ACTIVE DETAILS (For tournament scope)
+export const getTournamentAuctionDetails = async (req: Request, res: Response) => {
+    try {
+        const tournamentId = Number(req.params.tournamentId || req.params.id || req.query.tournamentId || 1);
+        const state = getTournamentAuctionState(tournamentId);
+
+        let activePlayer = null;
+        let leadingTeam = null;
+
+        if (state.currentPlayerId) {
+            activePlayer = await prisma.player.findUnique({
+                where: { id: state.currentPlayerId },
+                include: { team: true },
+            });
+            if (activePlayer?.teamId) {
+                leadingTeam = await prisma.team.findUnique({
+                    where: { id: activePlayer.teamId },
+                });
+            }
+        }
+
+        const recentBids = await prisma.bid.findMany({
+            where: { tournamentId },
+            include: { team: true, player: true },
+            orderBy: { createdAt: "desc" },
+            take: 20,
+        });
+
+        res.json({
+            tournamentId,
+            state,
+            activePlayer,
+            leadingTeam,
+            recentBids,
+        });
+    } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
+};
+
+// GET TOURNAMENT RESULTS & STATS
+export const getTournamentResults = async (req: Request, res: Response) => {
+    try {
+        const tournamentId = Number(req.params.tournamentId || req.params.id || req.query.tournamentId || 1);
+
+        const tournament = await prisma.tournament.findUnique({
+            where: { id: tournamentId },
+        });
+
+        if (!tournament) {
+            return res.status(404).json({ error: "Tournament not found" });
+        }
+
+        const teams = await prisma.team.findMany({
+            where: { tournamentId },
+            include: {
+                players: {
+                    where: { sold: true },
+                },
+            },
+            orderBy: { id: "asc" },
+        });
+
+        const soldPlayers = await prisma.player.findMany({
+            where: { tournamentId, sold: true, teamId: { not: null } },
+            include: { team: true },
+            orderBy: { currentBid: "desc" },
+        });
+
+        const unsoldPlayers = await prisma.player.findMany({
+            where: { tournamentId, OR: [{ status: "UNSOLD" }, { sold: true, teamId: null }] },
+            orderBy: { id: "desc" },
+        });
+
+        const availablePlayers = await prisma.player.findMany({
+            where: { tournamentId, sold: false, status: "AVAILABLE" },
+            orderBy: [{ queueOrder: "asc" }, { id: "asc" }],
+        });
+
+        res.json({
+            tournament,
+            teams,
+            soldPlayers,
+            unsoldPlayers,
+            availablePlayers,
+            totalSold: soldPlayers.length,
+            totalUnsold: unsoldPlayers.length,
+            totalAvailable: availablePlayers.length,
+        });
+    } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
+};
+
+
+// GET CURRENT AUCTION PLAYER (Tournament-isolated)
+export const getCurrentAuctionPlayer = async (req: Request, res: Response) => {
+    try {
+        const tournamentId = Number(
+            req.params.tournamentId || req.query.tournamentId || 1
+        );
+
+        const tournament = await prisma.tournament.findUnique({
+            where: { id: tournamentId },
+        });
+
+        if (!tournament) {
+            return res.status(404).json({ error: "Tournament not found" });
+        }
+
+        const state = getTournamentAuctionState(tournamentId);
+        let player: any = null;
+
+        if (state.currentPlayerId) {
+            player = await prisma.player.findUnique({
+                where: { id: state.currentPlayerId },
+                include: { team: true },
+            });
+
+            // STRICT TOURNAMENT VALIDATION
+            if (player && player.tournamentId !== tournamentId) {
+                console.warn(`[Auction] Security check failed: Player ${player.id} (T:${player.tournamentId}) is not in Tournament ${tournamentId}`);
+                player = null;
+                updateAuctionState(tournamentId, { currentPlayerId: null, status: "IDLE" });
+            }
+        }
+
+        // If in-memory state has no current player, check if DB has a LIVE player for this tournament
+        if (!player) {
+            const livePlayer = await prisma.player.findFirst({
+                where: {
+                    tournamentId,
+                    status: "LIVE",
+                    sold: false,
+                },
+                include: { team: true },
+            });
+            if (livePlayer) {
+                player = livePlayer;
+                updateAuctionState(tournamentId, {
+                    currentPlayerId: livePlayer.id,
+                    status: livePlayer.currentBid ? "BIDDING" : "IDLE",
+                });
+            }
+        }
+
+        res.json({
+            tournamentId,
+            tournament: {
+                id: tournament.id,
+                name: tournament.name,
+                slug: tournament.slug,
+                logo: tournament.logo,
+            },
+            status: state.status,
+            currentPlayerId: player ? player.id : null,
+            player: player
+                ? {
+                      id: player.id,
+                      tournamentId: player.tournamentId,
+                      name: player.name,
+                      photo: player.photo,
+                      category: player.category,
+                      fromWhere: player.fromWhere,
+                      age: player.age,
+                      battingStyle: player.battingStyle,
+                      bowlingStyle: player.bowlingStyle,
+                      basePrice: player.basePrice,
+                      currentBid: player.currentBid,
+                      sold: player.sold,
+                      status: player.status,
+                      teamId: player.teamId,
+                      team: player.team
+                          ? {
+                                id: player.team.id,
+                                name: player.team.name,
+                                logo: player.team.logo,
+                                purse: player.team.purse,
+                            }
+                          : null,
+                  }
+                : null,
+        });
+    } catch (error: any) {
+        console.error("Error fetching current player:", error);
+        res.status(500).json({ error: error.message });
+    }
 };

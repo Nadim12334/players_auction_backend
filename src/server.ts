@@ -56,6 +56,8 @@ import registrationRoutes from "./routes/registration";
 import tournamentRoutes from "./routes/tournaments";
 
 // Serve uploaded player photos statically
+const uploadsDir = path.resolve(__dirname, "..", "uploads");
+app.use("/uploads", express.static(uploadsDir));
 app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
 
 app.use("/api/tournaments", tournamentRoutes);
@@ -100,13 +102,14 @@ export function updateAuctionState(
     Object.assign(state, stateUpdates);
 
     // Emit strictly to the tournament room
-    io.to(`auction_${tId}`).emit("auctionStateUpdate", state);
+    io.to(`tournament_${tId}`).to(`auction_${tId}`).emit("auctionStateUpdate", state);
+    io.to(`tournament_${tId}`).to(`auction_${tId}`).emit("auctionStateUpdated", state);
     console.log(`[Socket] State updated for Tournament ${tId}:`, state.status, "Player:", state.currentPlayerId);
 }
 
 // Room broadcast helper
 export const emitToTournament = (tournamentId: number, event: string, data?: any) => {
-    io.to(`auction_${tournamentId}`).emit(event, data);
+    io.to(`tournament_${tournamentId}`).to(`auction_${tournamentId}`).emit(event, data);
 };
 
 // Safely evicts clients and cleans up state when a tournament is archived or deleted
@@ -143,12 +146,11 @@ io.on("connection", (socket) => {
         : null;
 
     if (handshakeTournamentId && !isNaN(handshakeTournamentId)) {
-        const room = `auction_${handshakeTournamentId}`;
-        socket.join(room);
+        socket.join(`tournament_${handshakeTournamentId}`);
+        socket.join(`auction_${handshakeTournamentId}`);
         socket.emit("auctionStateUpdate", getTournamentAuctionState(handshakeTournamentId));
-        console.log(`Socket ${socket.id} auto-joined ${room} from handshake`);
+        console.log(`Socket ${socket.id} auto-joined tournament_${handshakeTournamentId} and auction_${handshakeTournamentId}`);
     } else {
-        // Default to tournament 1 state
         socket.emit("auctionStateUpdate", getTournamentAuctionState(1));
     }
 
@@ -157,33 +159,52 @@ io.on("connection", (socket) => {
         const tId = Number(tournamentId);
         if (isNaN(tId)) return;
 
-        // Leave any previous auction rooms
+        // Leave any previous tournament rooms
         for (const room of socket.rooms) {
-            if (room.startsWith("auction_") && room !== `auction_${tId}`) {
+            if ((room.startsWith("auction_") || room.startsWith("tournament_")) &&
+                room !== `auction_${tId}` && room !== `tournament_${tId}`) {
                 socket.leave(room);
             }
         }
 
-        const room = `auction_${tId}`;
-        socket.join(room);
-        console.log(`Socket ${socket.id} joined room: ${room}`);
+        socket.join(`tournament_${tId}`);
+        socket.join(`auction_${tId}`);
+        console.log(`Socket ${socket.id} joined rooms: tournament_${tId} & auction_${tId}`);
 
-        // Send the latest state of this tournament to the connecting client
         socket.emit("auctionStateUpdate", getTournamentAuctionState(tId));
     });
 
     socket.on("leaveTournament", ({ tournamentId }: { tournamentId: number | string }) => {
         const tId = Number(tournamentId);
         if (!isNaN(tId)) {
+            socket.leave(`tournament_${tId}`);
             socket.leave(`auction_${tId}`);
-            console.log(`Socket ${socket.id} left room: auction_${tId}`);
+            console.log(`Socket ${socket.id} left rooms for tournament ${tId}`);
         }
     });
 
-    // Real-time bid broadcast scoped to tournament room
-    socket.on("placeBid", (data) => {
-        const tId = Number(data?.tournamentId) || 1;
-        io.to(`auction_${tId}`).emit("updateBid", data);
+    // Real-time bid broadcast scoped to tournament room with security validation
+    socket.on("placeBid", async (data) => {
+        try {
+            const tId = Number(data?.tournamentId);
+            if (!tId || isNaN(tId)) {
+                socket.emit("bidError", { message: "Invalid tournament ID" });
+                return;
+            }
+            const playerId = Number(data?.playerId);
+            const teamId = Number(data?.teamId);
+            if (playerId && teamId) {
+                const player = await prisma.player.findUnique({ where: { id: playerId } });
+                const team = await prisma.team.findUnique({ where: { id: teamId } });
+                if (!player || !team || player.tournamentId !== tId || team.tournamentId !== tId) {
+                    socket.emit("bidError", { message: "Player and team must belong to the same tournament." });
+                    return;
+                }
+            }
+            io.to(`tournament_${tId}`).to(`auction_${tId}`).emit("updateBid", data);
+        } catch (err) {
+            console.error("Socket placeBid error:", err);
+        }
     });
 
     socket.on("disconnect", () => {

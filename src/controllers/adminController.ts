@@ -22,7 +22,7 @@ export const startAuction = async (req: Request, res: Response) => {
     const tournamentId = requestedTournamentId ? Number(requestedTournamentId) : player.tournamentId;
     if (player.tournamentId !== tournamentId) {
         return res.status(400).json({
-            message: `Player belongs to Tournament ${player.tournamentId}, not Tournament ${tournamentId}`,
+            message: "This player does not belong to the selected tournament.",
         });
     }
 
@@ -35,6 +35,7 @@ export const startAuction = async (req: Request, res: Response) => {
             teamId: null,
             currentBid: null,
         },
+        include: { team: true },
     });
 
     // Delete existing bids for this player
@@ -44,8 +45,13 @@ export const startAuction = async (req: Request, res: Response) => {
 
     updateAuctionState(tournamentId, { currentPlayerId: playerId, status: "BIDDING" });
 
-    io.to(`auction_${tournamentId}`).emit("auctionStarted", { playerId });
-    io.to(`auction_${tournamentId}`).emit("unsoldUpdated");
+    io.to(`tournament_${tournamentId}`).to(`auction_${tournamentId}`).emit("currentPlayerUpdated", {
+        tournamentId,
+        player: updatedPlayer,
+    });
+    io.to(`tournament_${tournamentId}`).to(`auction_${tournamentId}`).emit("auctionStarted", { playerId, tournamentId, player: updatedPlayer });
+    io.to(`tournament_${tournamentId}`).to(`auction_${tournamentId}`).emit("auctionStateUpdated", { tournamentId, status: "BIDDING", currentPlayerId: playerId });
+    io.to(`tournament_${tournamentId}`).to(`auction_${tournamentId}`).emit("unsoldUpdated");
 
     res.json({
         message: "Auction started",
@@ -69,7 +75,23 @@ export const sellPlayer = async (req: Request, res: Response) => {
         return res.status(400).json({ message: "Cannot sell player without bids" });
     }
 
+    const requestedTournamentId = req.params.tournamentId || req.body.tournamentId || req.query.tournamentId;
+    if (requestedTournamentId && p.tournamentId !== Number(requestedTournamentId)) {
+        return res.status(400).json({ message: "This player does not belong to the selected tournament." });
+    }
     const tournamentId = p.tournamentId;
+
+    // Strict tournament isolation: verify winning team belongs to this tournament
+    const winningTeam = await prisma.team.findUnique({
+        where: { id: p.teamId },
+    });
+    if (!winningTeam || winningTeam.tournamentId !== tournamentId) {
+        return res.status(400).json({ message: "Winning team does not belong to the selected tournament." });
+    }
+
+    const tournament = await prisma.tournament.findUnique({
+        where: { id: tournamentId },
+    });
 
     const player = await prisma.player.update({
         where: { id: playerId },
@@ -77,16 +99,63 @@ export const sellPlayer = async (req: Request, res: Response) => {
             sold: true,
             status: "SOLD",
         },
+        include: { team: true },
     });
 
     updateAuctionState(tournamentId, { status: "SOLD" });
 
-    io.to(`auction_${tournamentId}`).emit("playerSold", { playerId, sold: true });
-    io.to(`auction_${tournamentId}`).emit("unsoldUpdated");
+    io.to(`tournament_${tournamentId}`).to(`auction_${tournamentId}`).emit("auctionStateUpdated", {
+        tournamentId,
+        status: "SOLD",
+        playerId,
+        player,
+        winningBid: player.currentBid,
+        teamId: player.teamId,
+    });
+    io.to(`tournament_${tournamentId}`).to(`auction_${tournamentId}`).emit("currentPlayerUpdated", {
+        tournamentId,
+        player,
+    });
+    io.to(`tournament_${tournamentId}`).to(`auction_${tournamentId}`).emit("playerSold", { playerId, sold: true, tournamentId, player });
+    io.to(`tournament_${tournamentId}`).to(`auction_${tournamentId}`).emit("unsoldUpdated");
+
+    // Generate dynamic Marathi congratulatory message
+    const tournamentName = tournament?.name || "Cricket Tournament";
+    const teamName = player.team?.name || winningTeam.name;
+    const soldPrice = player.currentBid || player.basePrice;
+    const formattedPrice = soldPrice.toLocaleString("en-IN");
+    const category = player.category || "All-Rounder";
+
+    const marathiMessage = `🏏 अभिनंदन ${player.name}! 🎉\n\nआपली ${tournamentName} क्रिकेट लिलावामध्ये\n${teamName} या संघासाठी यशस्वी निवड झाली आहे. 🏆\n\n💰 निवड किंमत: ₹${formattedPrice}\n🏏 संघ: ${teamName}\n📋 श्रेणी: ${category}\n\nआपल्या पुढील सामन्यांसाठी मनःपूर्वक शुभेच्छा! 💪🔥\nआपल्या उत्कृष्ट खेळातून संघाचे नाव उंचवा! 🏆🏏\n\nAll the Best! 💐`;
 
     res.json({
-        message: "Player sold successfully",
-        player,
+        success: true,
+        message: marathiMessage,
+        marathiMessage,
+        soldPrice,
+        player: {
+            id: player.id,
+            name: player.name,
+            phoneNumber: player.phoneNumber || null,
+            mobile: player.phoneNumber || null,
+            category: player.category,
+            fromWhere: player.fromWhere,
+            photo: player.photo,
+            status: player.status,
+            sold: player.sold,
+            tournamentId: player.tournamentId,
+        },
+        team: {
+            id: winningTeam.id,
+            name: winningTeam.name,
+            logo: winningTeam.logo,
+            tournamentId: winningTeam.tournamentId,
+        },
+        tournament: {
+            id: tournamentId,
+            name: tournamentName,
+            slug: tournament?.slug || "",
+        },
         tournamentId,
     });
 };
@@ -102,6 +171,10 @@ export const markUnsold = async (req: Request, res: Response) => {
         return res.status(404).json({ message: "Player not found" });
     }
 
+    const requestedTournamentId = req.params.tournamentId || req.body.tournamentId || req.query.tournamentId;
+    if (requestedTournamentId && p.tournamentId !== Number(requestedTournamentId)) {
+        return res.status(400).json({ message: "This player does not belong to the selected tournament." });
+    }
     const tournamentId = p.tournamentId;
 
     // Refund leading bidder if any
@@ -125,12 +198,23 @@ export const markUnsold = async (req: Request, res: Response) => {
             teamId: null,
             currentBid: null,
         },
+        include: { team: true },
     });
 
     updateAuctionState(tournamentId, { status: "UNSOLD" });
 
-    io.to(`auction_${tournamentId}`).emit("playerSold", { playerId, sold: false });
-    io.to(`auction_${tournamentId}`).emit("unsoldUpdated");
+    io.to(`tournament_${tournamentId}`).to(`auction_${tournamentId}`).emit("auctionStateUpdated", {
+        tournamentId,
+        status: "UNSOLD",
+        playerId,
+        player,
+    });
+    io.to(`tournament_${tournamentId}`).to(`auction_${tournamentId}`).emit("currentPlayerUpdated", {
+        tournamentId,
+        player,
+    });
+    io.to(`tournament_${tournamentId}`).to(`auction_${tournamentId}`).emit("playerSold", { playerId, sold: false, tournamentId, player });
+    io.to(`tournament_${tournamentId}`).to(`auction_${tournamentId}`).emit("unsoldUpdated");
 
     res.json({
         message: "Player marked as unsold",
@@ -167,6 +251,7 @@ export const nextPlayer = async (req: Request, res: Response) => {
                 sold: false,
                 status: "LIVE",
             },
+            include: { team: true },
         });
 
         // Delete any bids placed for this player
@@ -175,8 +260,13 @@ export const nextPlayer = async (req: Request, res: Response) => {
         });
 
         updateAuctionState(tournamentId, { currentPlayerId: player.id, status: "IDLE" });
-        io.to(`auction_${tournamentId}`).emit("auctionNext", { playerId: player.id });
-        io.to(`auction_${tournamentId}`).emit("unsoldUpdated");
+        io.to(`tournament_${tournamentId}`).to(`auction_${tournamentId}`).emit("currentPlayerUpdated", {
+            tournamentId,
+            player: updatedPlayer,
+        });
+        io.to(`tournament_${tournamentId}`).to(`auction_${tournamentId}`).emit("auctionNext", { playerId: player.id, tournamentId, player: updatedPlayer });
+        io.to(`tournament_${tournamentId}`).to(`auction_${tournamentId}`).emit("auctionStateUpdated", { tournamentId, status: "IDLE", currentPlayerId: player.id });
+        io.to(`tournament_${tournamentId}`).to(`auction_${tournamentId}`).emit("unsoldUpdated");
 
         return res.json({
             message: "Next player loaded successfully",
@@ -185,7 +275,12 @@ export const nextPlayer = async (req: Request, res: Response) => {
         });
     } else {
         updateAuctionState(tournamentId, { currentPlayerId: null, status: "IDLE" });
-        io.to(`auction_${tournamentId}`).emit("auctionNext", { playerId: null });
+        io.to(`tournament_${tournamentId}`).to(`auction_${tournamentId}`).emit("currentPlayerUpdated", {
+            tournamentId,
+            player: null,
+        });
+        io.to(`tournament_${tournamentId}`).to(`auction_${tournamentId}`).emit("auctionNext", { playerId: null, tournamentId, player: null });
+        io.to(`tournament_${tournamentId}`).to(`auction_${tournamentId}`).emit("auctionStateUpdated", { tournamentId, status: "IDLE", currentPlayerId: null });
 
         return res.json({
             message: "No more unsold players left in this tournament",
@@ -245,9 +340,9 @@ export const auctionUnsoldNow = async (req: Request, res: Response) => {
 
         updateAuctionState(tournamentId, { currentPlayerId: id, status: "BIDDING" });
 
-        io.to(`auction_${tournamentId}`).emit("auctionStarted", { playerId: id });
-        io.to(`auction_${tournamentId}`).emit("playerRecalled", { player: updatedPlayer, mode: "AUCTION_NOW" });
-        io.to(`auction_${tournamentId}`).emit("unsoldUpdated");
+        io.to(`tournament_${tournamentId}`).to(`auction_${tournamentId}`).emit("auctionStarted", { playerId: id });
+        io.to(`tournament_${tournamentId}`).to(`auction_${tournamentId}`).emit("playerRecalled", { player: updatedPlayer, mode: "AUCTION_NOW" });
+        io.to(`tournament_${tournamentId}`).to(`auction_${tournamentId}`).emit("unsoldUpdated");
 
         res.json({
             message: "Player loaded for auction now",
@@ -295,8 +390,8 @@ export const moveUnsoldToEnd = async (req: Request, res: Response) => {
 
         await prisma.bid.deleteMany({ where: { playerId: id } });
 
-        io.to(`auction_${tournamentId}`).emit("playerRecalled", { player: updatedPlayer, mode: "MOVE_TO_END" });
-        io.to(`auction_${tournamentId}`).emit("unsoldUpdated");
+        io.to(`tournament_${tournamentId}`).to(`auction_${tournamentId}`).emit("playerRecalled", { player: updatedPlayer, mode: "MOVE_TO_END" });
+        io.to(`tournament_${tournamentId}`).to(`auction_${tournamentId}`).emit("unsoldUpdated");
 
         res.json({
             message: "Player moved to end of auction queue",
@@ -327,7 +422,7 @@ export const removeUnsoldPlayer = async (req: Request, res: Response) => {
 
         await prisma.player.delete({ where: { id } });
 
-        io.to(`auction_${tournamentId}`).emit("unsoldUpdated");
+        io.to(`tournament_${tournamentId}`).to(`auction_${tournamentId}`).emit("unsoldUpdated");
 
         res.json({ message: "Player permanently removed from tournament auction" });
     } catch (error: any) {
@@ -518,7 +613,7 @@ export const importPlayers = async (req: Request, res: Response) => {
             }
         }
 
-        io.to(`auction_${tournamentId}`).emit("unsoldUpdated");
+        io.to(`tournament_${tournamentId}`).to(`auction_${tournamentId}`).emit("unsoldUpdated");
 
         res.json({
             tournamentId,
